@@ -7,7 +7,7 @@ Hooks.on("renderFilePicker", (app, html, data) => {
   const targetPath = app.field?.name || app.options?.field || "";
   const isTokenField = targetPath.includes("prototypeToken") || targetPath.includes("token");
 
-  // Variables de estado
+
   let offsetX = 0;
   let offsetY = 0;
   let scale = 1.0;
@@ -113,7 +113,7 @@ Hooks.on("renderFilePicker", (app, html, data) => {
     });
   }
 
-  // --- ARRASTRE DE IMAGEN CON EL MOUSE ---
+
   imgPreview.addEventListener("mousedown", (e) => {
     if (!chkAsToken.checked) return;
     isDragging = true;
@@ -162,7 +162,7 @@ Hooks.on("renderFilePicker", (app, html, data) => {
     updatePreview(inputUrl.value.trim());
   });
 
-  // RENDERIZADO DE MARCOS
+
   const processImageToken = (srcUrl, style, colorHex, bWidth) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -178,7 +178,7 @@ Hooks.on("renderFilePicker", (app, html, data) => {
         const paddingExtra = bWidth + 12;
         const radius = size / 2 - paddingExtra;
 
-        // 1. Recorte circular de la imagen
+
         ctx.save();
         ctx.beginPath();
         ctx.arc(center, center, radius, 0, Math.PI * 2, true);
@@ -193,7 +193,7 @@ Hooks.on("renderFilePicker", (app, html, data) => {
         ctx.drawImage(img, 0, 0, img.width, img.height, drawX, drawY, drawWidth, drawHeight);
         ctx.restore();
 
-        // 2. Dibujo de diseños temáticos complejos
+
         if (style !== "none") {
           ctx.save();
           ctx.strokeStyle = colorHex;
