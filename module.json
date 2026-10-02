@@ -4,8 +4,8 @@
   "description": "Permite asignar imágenes a tokens y personajes pegando un enlace web directamente en el FilePicker con diseño de bordes personalizados.",
   "version": "1.0.0",
   "compatibility": {
-    "minimum": "11",
-    "verified": "12"
+    "minimum": "12",
+    "verified": "16"
   },
   "authors": [
     {
