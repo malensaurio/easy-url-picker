@@ -1,4 +1,4 @@
-Hooks.on("renderFilePicker", (app, html, data) => {
+Hooks.on("renderFilePicker", async (app, html, data) => {
   const root = html instanceof HTMLElement ? html : html[0];
   if (!root) return;
 
@@ -7,11 +7,59 @@ Hooks.on("renderFilePicker", (app, html, data) => {
   const targetPath = app.field?.name || app.options?.field || "";
   const isTokenField = targetPath.includes("prototypeToken") || targetPath.includes("token");
 
+  let doc = app.document || app.object || app.options?.document;
+  if (!doc || typeof doc.setFlag !== "function") {
+    const activeSheet = document.querySelector(".sheet.actor");
+    if (activeSheet) {
+      const actorId = activeSheet.id?.replace("actor-", "") || activeSheet.dataset?.appid;
+      if (actorId && game.actors) {
+        doc = game.actors.get(actorId) || game.actors.find(a => activeSheet.id.includes(a.id));
+      }
+    }
+  }
 
-  let offsetX = 0;
-  let offsetY = 0;
-  let scale = 1.0;
-  let borderWidth = 8;
+  if (!doc) {
+    for (let w of Object.values(ui.windows)) {
+      if (w.actor && typeof w.actor.setFlag === "function") {
+        doc = w.actor;
+        break;
+      }
+    }
+  }
+
+  let savedConfig = {};
+  if (doc && typeof doc.getFlag === "function") {
+    savedConfig = doc.getFlag("world", "easyUrlPickerConfig") || {};
+  }
+
+  const storageKey = doc ? `easyUrlPicker_${doc.id}` : "easyUrlPicker_last";
+  if (!savedConfig.rawUrl) {
+    try {
+      const localData = localStorage.getItem(storageKey);
+      if (localData) savedConfig = JSON.parse(localData);
+    } catch (e) {}
+  }
+
+  let rawUrl = savedConfig.rawUrl || "";
+
+  if (!rawUrl) {
+    if (app.field?.value && typeof app.field.value === "string" && app.field.value.startsWith("http")) {
+      rawUrl = app.field.value;
+    } else if (app.options?.current && typeof app.options.current === "string" && app.options.current.startsWith("http")) {
+      rawUrl = app.options.current;
+    }
+  }
+
+  const defaultFileName = savedConfig.fileName || (doc?.name ? doc.name.toLowerCase().replace(/[^a-z0-9]/g, "-") : "token-base");
+
+  let offsetX = savedConfig.offX ?? 0;
+  let offsetY = savedConfig.offY ?? 0;
+  let scale = savedConfig.sc ?? 1.0;
+  let borderWidth = savedConfig.bw ?? 10;
+  let borderStyle = savedConfig.st || "spikes";
+  let borderColor = savedConfig.col || "#eab308";
+  let isTokenMode = savedConfig.isTok ?? true;
+
   let isDragging = false;
   let startX = 0;
   let startY = 0;
@@ -20,70 +68,78 @@ Hooks.on("renderFilePicker", (app, html, data) => {
   formGroup.className = "url-picker-container";
   formGroup.innerHTML = `
     <label class="url-picker-label">
-      <i class="fas fa-link"></i> Enlace de imagen (URL):
+      <i class="fas fa-link"></i> Image Link (URL):
       <span class="url-picker-target-badge">${isTokenField ? "TOKEN" : "PORTRAIT"}</span>
     </label>
     
     <div class="url-picker-input-group">
-      <input type="url" class="url-picker-input" placeholder="https://ejemplo.com/imagen.png" />
-      <button type="button" class="url-picker-btn" title="Aplicar URL"><i class="fas fa-check"></i> Aplicar</button>
+      <input type="text" class="url-picker-input" placeholder="https://example.com/image.png" value="${rawUrl}" />
+      <button type="button" class="url-picker-clear-btn" title="Clear URL" style="padding: 0 8px; margin-right: 4px;"><i class="fas fa-times"></i></button>
+      <button type="button" class="url-picker-btn" title="Apply URL"><i class="fas fa-check"></i> Apply</button>
     </div>
 
-    <!-- Opciones de Token -->
-    <div class="url-picker-token-options" style="${isTokenField ? 'display:flex;' : 'display:none;'}">
+    <!-- Token Options -->
+    <div class="url-picker-token-options" style="display:flex;">
       <label class="url-picker-checkbox-label">
-        <input type="checkbox" class="url-picker-as-token" ${isTokenField ? 'checked' : ''}>
-        <i class="fas fa-coins"></i> Formatear como Token Circular
+        <input type="checkbox" class="url-picker-as-token" ${isTokenMode ? 'checked' : ''}>
+        <i class="fas fa-coins"></i> Format as Circular Token
       </label>
 
-      <div class="url-picker-border-controls" style="${isTokenField ? 'display:flex;' : 'display:none;'}">
+      <div class="url-picker-border-controls" style="${isTokenMode ? 'display:flex;' : 'display:none;'}">
         <div class="url-picker-control-row">
-          <label><i class="fas fa-shield-alt"></i> Diseños Temáticos RPG:</label>
+          <label><i class="fas fa-shield-alt"></i> RPG Themed Designs:</label>
           <select class="url-picker-border-style">
-            <option value="none">Sin Borde</option>
-            <option value="spikes" selected>⚔️ Picos de Hierro / Espinas</option>
-            <option value="fire">🔥 Fuego / Aura Llameante</option>
-            <option value="nature">🌿 Enredadera & Hojas Druídicas</option>
-            <option value="ice">❄️ Cristal de Hielo / Escarcha</option>
-            <option value="stone">🪨 Piedra / Rocas Ancestrales</option>
-            <option value="rivets">🛡️ Remaches de Bronce / Placas</option>
-            <option value="elven">✨ Filigrana Élfica / Dorado</option>
-            <option value="water">🌊 Agua / Ondas Fluidas</option>
-            <option value="solid">🔴 Borde Clásico Simple</option>
-            <option value="double">⭕ Doble Anillo Astrológico</option>
-            <option value="cogwheel">⚙️ Engranaje Arcana</option>
+            <option value="none" ${borderStyle === "none" ? "selected" : ""}>No Border</option>
+            <option value="spikes" ${borderStyle === "spikes" ? "selected" : ""}>Iron Spikes / Thorns</option>
+            <option value="fire" ${borderStyle === "fire" ? "selected" : ""}>Fire / Flaming Aura</option>
+            <option value="nature" ${borderStyle === "nature" ? "selected" : ""}>Vines & Druidic Leaves</option>
+            <option value="ice" ${borderStyle === "ice" ? "selected" : ""}>Ice Crystal / Frost</option>
+            <option value="stone" ${borderStyle === "stone" ? "selected" : ""}>Stone / Ancient Rocks</option>
+            <option value="rivets" ${borderStyle === "rivets" ? "selected" : ""}>Bronze Rivets / Plates</option>
+            <option value="elven" ${borderStyle === "elven" ? "selected" : ""}>Elven Filigree / Gold</option>
+            <option value="water" ${borderStyle === "water" ? "selected" : ""}>Water / Fluid Waves</option>
+            <option value="solid" ${borderStyle === "solid" ? "selected" : ""}>Simple Classic Border</option>
+            <option value="double" ${borderStyle === "double" ? "selected" : ""}>Double Astrological Ring</option>
+            <option value="cogwheel" ${borderStyle === "cogwheel" ? "selected" : ""}>Arcane Cogwheel</option>
           </select>
         </div>
 
         <div class="url-picker-control-row">
-          <label><i class="fas fa-palette"></i> Color Tonalidad:</label>
+          <label><i class="fas fa-palette"></i> Color Tone:</label>
           <div class="url-picker-color-group">
-            <input type="color" class="url-picker-border-color" value="#eab308" />
-            <span class="url-picker-color-val">#EAB308</span>
+            <input type="color" class="url-picker-border-color" value="${borderColor}" />
+            <span class="url-picker-color-val">${borderColor.toUpperCase()}</span>
           </div>
         </div>
 
         <div class="url-picker-control-row">
-          <label><i class="fas fa-arrows-alt-h"></i> Grosor / Relieve:</label>
+          <label><i class="fas fa-arrows-alt-h"></i> Thickness / Relief:</label>
           <div class="url-picker-scale-group">
-            <input type="range" class="url-picker-border-width" min="4" max="22" step="1" value="10" />
-            <span class="url-picker-width-val">10px</span>
+            <input type="range" class="url-picker-border-width" min="4" max="22" step="1" value="${borderWidth}" />
+            <span class="url-picker-width-val">${borderWidth}px</span>
           </div>
         </div>
 
         <div class="url-picker-control-row">
-          <label><i class="fas fa-search-plus"></i> Zoom / Escala:</label>
+          <label><i class="fas fa-search-plus"></i> Zoom / Scale:</label>
           <div class="url-picker-scale-group">
-            <input type="range" class="url-picker-zoom" min="0.5" max="2.5" step="0.05" value="1.0" />
-            <button type="button" class="url-picker-reset-pos" title="Centrar Posición"><i class="fas fa-sync-alt"></i></button>
+            <input type="range" class="url-picker-zoom" min="0.5" max="2.5" step="0.05" value="${scale}" />
+            <button type="button" class="url-picker-reset-pos" title="Center Position"><i class="fas fa-sync-alt"></i></button>
           </div>
         </div>
-        <small class="url-picker-drag-hint"><i class="fas fa-hand-pointer"></i> Haz clic y arrastra la vista previa para posicionar la imagen</small>
+        <small class="url-picker-drag-hint"><i class="fas fa-hand-pointer"></i> Click and drag preview to position image</small>
       </div>
     </div>
 
-    <div class="url-picker-preview-wrapper">
-      <img class="url-picker-preview" alt="Vista previa" />
+    <!-- Previsualizador y Nombre de Archivo -->
+    <div class="url-picker-preview-wrapper" style="display:flex; flex-direction:column; align-items:center;">
+      <img class="url-picker-preview" alt="Preview" />
+      
+      <div class="url-picker-filename-group" style="margin-top: 10px; display: flex; align-items: center; gap: 6px; width: 100%; max-width: 320px;">
+        <label style="font-size: 12px; white-space: nowrap;"><i class="fas fa-file-signature"></i> File Name:</label>
+        <input type="text" class="url-picker-filename-input" value="${defaultFileName}" placeholder="token-name" style="flex: 1; height: 26px; font-size: 12px;" />
+        <span style="font-size: 12px; color: #888;">.png</span>
+      </div>
     </div>
   `;
 
@@ -91,6 +147,8 @@ Hooks.on("renderFilePicker", (app, html, data) => {
   targetContainer.insertBefore(formGroup, targetContainer.firstChild);
 
   const inputUrl = formGroup.querySelector(".url-picker-input");
+  const inputFileName = formGroup.querySelector(".url-picker-filename-input");
+  const btnClear = formGroup.querySelector(".url-picker-clear-btn");
   const btnApply = formGroup.querySelector(".url-picker-btn");
   const imgPreview = formGroup.querySelector(".url-picker-preview");
   const chkAsToken = formGroup.querySelector(".url-picker-as-token");
@@ -103,16 +161,19 @@ Hooks.on("renderFilePicker", (app, html, data) => {
   const inputZoom = formGroup.querySelector(".url-picker-zoom");
   const btnResetPos = formGroup.querySelector(".url-picker-reset-pos");
 
-  if (!isTokenField) {
-    const tokenOptionsDiv = formGroup.querySelector(".url-picker-token-options");
-    tokenOptionsDiv.style.display = "flex";
+  inputUrl.addEventListener("click", () => inputUrl.select());
+  inputFileName.addEventListener("click", () => inputFileName.select());
 
-    chkAsToken.addEventListener("change", (e) => {
-      borderControls.style.display = e.target.checked ? "flex" : "none";
-      updatePreview(inputUrl.value.trim());
-    });
-  }
+  btnClear.addEventListener("click", () => {
+    inputUrl.value = "";
+    updatePreview("");
+    inputUrl.focus();
+  });
 
+  chkAsToken.addEventListener("change", (e) => {
+    borderControls.style.display = e.target.checked ? "flex" : "none";
+    updatePreview(inputUrl.value.trim());
+  });
 
   imgPreview.addEventListener("mousedown", (e) => {
     if (!chkAsToken.checked) return;
@@ -162,7 +223,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
     updatePreview(inputUrl.value.trim());
   });
 
-
   const processImageToken = (srcUrl, style, colorHex, bWidth) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -170,7 +230,7 @@ Hooks.on("renderFilePicker", (app, html, data) => {
       img.onload = () => {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
-        const size = 300;
+        const size = 512;
         canvas.width = size;
         canvas.height = size;
 
@@ -178,21 +238,29 @@ Hooks.on("renderFilePicker", (app, html, data) => {
         const paddingExtra = bWidth + 12;
         const radius = size / 2 - paddingExtra;
 
-
         ctx.save();
         ctx.beginPath();
         ctx.arc(center, center, radius, 0, Math.PI * 2, true);
         ctx.closePath();
         ctx.clip();
 
-        const drawWidth = size * scale;
-        const drawHeight = size * scale;
+        const aspect = img.width / img.height;
+        let baseW, baseH;
+        if (aspect > 1) {
+          baseH = size;
+          baseW = size * aspect;
+        } else {
+          baseW = size;
+          baseH = size / aspect;
+        }
+
+        const drawWidth = baseW * scale;
+        const drawHeight = baseH * scale;
         const drawX = (size - drawWidth) / 2 + offsetX;
         const drawY = (size - drawHeight) / 2 + offsetY;
 
         ctx.drawImage(img, 0, 0, img.width, img.height, drawX, drawY, drawWidth, drawHeight);
         ctx.restore();
-
 
         if (style !== "none") {
           ctx.save();
@@ -200,18 +268,15 @@ Hooks.on("renderFilePicker", (app, html, data) => {
           ctx.fillStyle = colorHex;
 
           if (style === "spikes") {
-            // Picos / Espinas de hierro
             const spikeCount = 16;
             ctx.shadowColor = colorHex;
             ctx.shadowBlur = 6;
 
-            // Anillo base
             ctx.lineWidth = bWidth;
             ctx.beginPath();
             ctx.arc(center, center, radius, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Púas exteriores
             for (let i = 0; i < spikeCount; i++) {
               const angle = (i / spikeCount) * Math.PI * 2;
               const pX = center + Math.cos(angle) * (radius + bWidth / 2 + 12);
@@ -231,7 +296,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
             }
           } 
           else if (style === "fire") {
-            // Fuego / Aura Llameante
             const flames = 32;
             ctx.shadowColor = "#ff4500";
             ctx.shadowBlur = 12;
@@ -260,7 +324,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
             ctx.stroke();
           } 
           else if (style === "nature") {
-            // Hojas y enredadera
             ctx.lineWidth = Math.max(3, bWidth / 2);
             ctx.strokeStyle = colorHex;
             ctx.beginPath();
@@ -284,7 +347,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
             }
           } 
           else if (style === "ice") {
-            // Hielo / Escarcha Rúnica
             const spikes = 24;
             ctx.shadowColor = colorHex;
             ctx.shadowBlur = 10;
@@ -311,7 +373,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
             }
           } 
           else if (style === "stone") {
-            // Rocas Ancestrales
             const blocks = 16;
             ctx.lineWidth = bWidth;
             
@@ -326,7 +387,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
             }
           } 
           else if (style === "rivets") {
-            // Placas con Remaches
             ctx.lineWidth = bWidth;
             ctx.beginPath();
             ctx.arc(center, center, radius, 0, Math.PI * 2);
@@ -345,7 +405,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
             }
           } 
           else if (style === "elven") {
-            // Filigrana Dorado
             ctx.lineWidth = Math.max(2, bWidth / 3);
             ctx.beginPath();
             ctx.arc(center, center, radius + 4, 0, Math.PI * 2);
@@ -367,7 +426,6 @@ Hooks.on("renderFilePicker", (app, html, data) => {
             }
           }
           else if (style === "water") {
-            // Ondas de agua
             const drops = 20;
             ctx.shadowColor = colorHex;
             ctx.shadowBlur = 8;
@@ -430,20 +488,53 @@ Hooks.on("renderFilePicker", (app, html, data) => {
           ctx.restore();
         }
 
-        resolve(canvas.toDataURL("image/png"));
+        resolve(canvas);
       };
-      img.onerror = () => resolve(srcUrl);
+      img.onerror = () => resolve(null);
       img.src = srcUrl;
     });
   };
 
+  const saveAndOverwriteTokenFile = (canvasObj, customFileName) => {
+    return new Promise((resolve) => {
+      canvasObj.toBlob(async (blob) => {
+        if (!blob) return resolve(null);
+
+        const worldId = game.world.id;
+        const folder = `worlds/${worldId}/assets/actors`;
+        const cleanName = customFileName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-") || "token-base";
+        const fileName = `${cleanName}.png`;
+        const file = new File([blob], fileName, { type: "image/png" });
+
+        const pickerApp = foundry.applications?.apps?.FilePicker || globalThis.FilePicker;
+
+        try {
+          // Crear los subdirectorios recursivamente en la carpeta Data si aún no existen
+          try {
+            await pickerApp.createDirectory("data", `worlds/${worldId}/assets`, {}, { notify: false });
+          } catch (e1) {}
+          try {
+            await pickerApp.createDirectory("data", folder, {}, { notify: false });
+          } catch (e2) {}
+
+          const uploaded = await pickerApp.upload("data", folder, file, {}, { notify: false });
+          const finalPath = (uploaded.path || `${folder}/${fileName}`) + `?t=${Date.now()}`;
+          resolve(finalPath);
+        } catch (err) {
+          console.error("Easy URL Picker | Upload error:", err);
+          resolve(null);
+        }
+      }, "image/png");
+    });
+  };
+
   const updatePreview = async (url) => {
-    if (url && (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:"))) {
+    if (url && url.length > 2) {
       if (chkAsToken.checked) {
         imgPreview.classList.add("token-style");
         imgPreview.style.cursor = "grab";
-        const processed = await processImageToken(url, selectBorder.value, inputColor.value, borderWidth);
-        imgPreview.src = processed;
+        const canvas = await processImageToken(url, selectBorder.value, inputColor.value, borderWidth);
+        if (canvas) imgPreview.src = canvas.toDataURL("image/png");
       } else {
         imgPreview.classList.remove("token-style");
         imgPreview.style.cursor = "default";
@@ -456,6 +547,10 @@ Hooks.on("renderFilePicker", (app, html, data) => {
     }
   };
 
+  if (rawUrl) {
+    updatePreview(rawUrl);
+  }
+
   inputUrl.addEventListener("input", (ev) => {
     updatePreview(ev.target.value.trim());
   });
@@ -464,15 +559,47 @@ Hooks.on("renderFilePicker", (app, html, data) => {
     ev.preventDefault();
     ev.stopPropagation();
 
-    let finalUrl = inputUrl.value.trim();
+    const typedUrl = inputUrl.value.trim();
+    const typedFileName = inputFileName.value.trim() || defaultFileName;
 
-    if (!finalUrl) {
-      ui.notifications.warn("Por favor, ingresa una URL válida.");
+    if (!typedUrl) {
+      ui.notifications.warn("Please enter a valid URL.");
       return;
     }
 
+    const configToSave = {
+      rawUrl: typedUrl,
+      fileName: typedFileName,
+      offX: offsetX,
+      offY: offsetY,
+      sc: scale,
+      bw: borderWidth,
+      st: selectBorder.value,
+      col: inputColor.value,
+      isTok: chkAsToken.checked
+    };
+
+    if (doc && typeof doc.setFlag === "function") {
+      try {
+        await doc.setFlag("world", "easyUrlPickerConfig", configToSave);
+      } catch (err) {
+        console.warn("Easy URL Picker | Error saving flags:", err);
+      }
+    }
+
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(configToSave));
+    } catch (e) {}
+
+    let finalUrl = typedUrl;
     if (chkAsToken.checked) {
-      finalUrl = await processImageToken(finalUrl, selectBorder.value, inputColor.value, borderWidth);
+      const canvas = await processImageToken(typedUrl, selectBorder.value, inputColor.value, borderWidth);
+      if (canvas) {
+        const savedFilePath = await saveAndOverwriteTokenFile(canvas, typedFileName);
+        if (savedFilePath) {
+          finalUrl = savedFilePath;
+        }
+      }
     }
 
     if (app.field) {
@@ -484,13 +611,13 @@ Hooks.on("renderFilePicker", (app, html, data) => {
       try {
         await app.callback(finalUrl);
       } catch (err) {
-        console.warn("Easy URL Picker | Excepción en callback:", err);
+        console.warn("Easy URL Picker | Callback exception:", err);
       }
     } else if (app.options && typeof app.options.callback === "function") {
       try {
         await app.options.callback(finalUrl);
       } catch (err) {
-        console.warn("Easy URL Picker | Excepción en options.callback:", err);
+        console.warn("Easy URL Picker | options.callback exception:", err);
       }
     }
 
